@@ -626,22 +626,26 @@ function AdminTeamDetail({ session, teamId, onBack }) {
   const [coaches, setCoaches] = useState([]);
   const [athletes, setAthletes] = useState([]);
   const [pendingUsers, setPendingUsers] = useState([]);
+  const [existingParents, setExistingParents] = useState([]);
   const [showAddCoach, setShowAddCoach] = useState(false);
+  const [assignAthlete, setAssignAthlete] = useState(null);
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
     setError('');
     try {
-      const [teamRows, tc, ath, pending] = await Promise.all([
+      const [teamRows, tc, ath, pending, parents] = await Promise.all([
         pg(`/teams?id=eq.${teamId}&select=*`, session.accessToken),
         pg(`/team_coaches?team_id=eq.${teamId}&select=profiles(id,name)`, session.accessToken),
         pg(`/athletes?team_id=eq.${teamId}&select=*,profiles(name)`, session.accessToken),
         pg(`/profiles?role=eq.pending&select=id,name&order=name`, session.accessToken),
+        pg(`/profiles?role=eq.parent&select=id,name&order=name`, session.accessToken),
       ]);
       setTeam(teamRows[0]);
       setCoaches(tc.map((r) => r.profiles).filter(Boolean));
       setAthletes(ath);
       setPendingUsers(pending);
+      setExistingParents(parents);
     } catch (e) { setError(e.message); }
   }, [session, teamId]);
 
@@ -651,6 +655,15 @@ function AdminTeamDetail({ session, teamId, onBack }) {
     await pg('/team_coaches', session.accessToken, { method: 'POST', body: { team_id: teamId, coach_id: userId }, prefer: 'return=representation' });
     await pg(`/profiles?id=eq.${userId}`, session.accessToken, { method: 'PATCH', body: { role: 'coach' } });
     setShowAddCoach(false);
+    load();
+  };
+
+  const assignParentToAthlete = async (userId, alreadyParent) => {
+    await pg(`/athletes?id=eq.${assignAthlete.id}`, session.accessToken, { method: 'PATCH', body: { parent_id: userId } });
+    if (!alreadyParent) {
+      await pg(`/profiles?id=eq.${userId}`, session.accessToken, { method: 'PATCH', body: { role: 'parent' } });
+    }
+    setAssignAthlete(null);
     load();
   };
 
@@ -684,8 +697,13 @@ function AdminTeamDetail({ session, teamId, onBack }) {
           <div className="flex flex-col gap-2">
             {athletes.map((a) => (
               <Card key={a.id}>
-                <div className="font-semibold text-sm">{a.name}</div>
-                <div className="text-xs mt-0.5" style={{ color: 'var(--gdc-grey)' }}>Enc. educação: {a.profiles?.name || 'Por atribuir'}</div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-semibold text-sm">{a.name}</div>
+                    <div className="text-xs mt-0.5 truncate" style={{ color: 'var(--gdc-grey)' }}>Enc. educação: {a.profiles?.name || 'Por atribuir'}</div>
+                  </div>
+                  <Button size="sm" variant="ghost" onClick={() => setAssignAthlete(a)}>{a.profiles?.name ? 'Mudar' : 'Atribuir'}</Button>
+                </div>
               </Card>
             ))}
           </div>
@@ -701,6 +719,59 @@ function AdminTeamDetail({ session, teamId, onBack }) {
           />
         </Modal>
       )}
+      {assignAthlete && (
+        <Modal title={`Encarregado de educação de ${assignAthlete.name}`} onClose={() => setAssignAthlete(null)}>
+          <AssignParentForm
+            existingParents={existingParents}
+            pendingUsers={pendingUsers}
+            onSubmit={assignParentToAthlete}
+          />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function AssignParentForm({ existingParents, pendingUsers, onSubmit }) {
+  const [mode, setMode] = useState(existingParents.length > 0 ? 'existing' : 'pending');
+  const [userId, setUserId] = useState((existingParents[0] || pendingUsers[0])?.id || '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const list = mode === 'existing' ? existingParents : pendingUsers;
+
+  const switchMode = (m) => {
+    setMode(m);
+    const l = m === 'existing' ? existingParents : pendingUsers;
+    setUserId(l[0]?.id || '');
+  };
+
+  const submit = async () => {
+    setSaving(true); setError('');
+    try { await onSubmit(userId, mode === 'existing'); } catch (e) { setError(e.message); } finally { setSaving(false); }
+  };
+
+  if (existingParents.length === 0 && pendingUsers.length === 0) {
+    return <div className="text-sm py-4 text-center" style={{ color: 'var(--gdc-grey)' }}>Ainda não há nenhum encarregado de educação com conta criada (nem pendente). Pede à pessoa para criar conta primeiro.</div>;
+  }
+
+  return (
+    <div>
+      <ErrorBlock message={error} />
+      <div className="flex gap-2 mb-3">
+        <button onClick={() => switchMode('existing')} disabled={existingParents.length === 0} className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40" style={{ background: mode === 'existing' ? 'var(--gdc-yellow)' : 'rgba(11,11,12,0.05)' }}>Já é encarregado de outro atleta</button>
+        <button onClick={() => switchMode('pending')} disabled={pendingUsers.length === 0} className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-40" style={{ background: mode === 'pending' ? 'var(--gdc-yellow)' : 'rgba(11,11,12,0.05)' }}>Conta por atribuir</button>
+      </div>
+      {list.length === 0 ? (
+        <div className="text-sm py-4 text-center" style={{ color: 'var(--gdc-grey)' }}>Sem opções nesta categoria.</div>
+      ) : (
+        <Field label="Pessoa">
+          <select style={inputStyle} value={userId} onChange={(e) => setUserId(e.target.value)}>
+            {list.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+          </select>
+        </Field>
+      )}
+      <Button full disabled={!userId || saving || list.length === 0} onClick={submit}>{saving ? 'A atribuir…' : 'Atribuir'}</Button>
     </div>
   );
 }
