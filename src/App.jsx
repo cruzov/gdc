@@ -1482,6 +1482,7 @@ function ParentAttendanceTab({ session, athlete }) {
   const [month, setMonth] = useState(() => todayISO().slice(0, 7));
   const [events, setEvents] = useState([]);
   const [records, setRecords] = useState({});
+  const [startedMap, setStartedMap] = useState({});
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -1498,7 +1499,15 @@ function ParentAttendanceTab({ session, athlete }) {
           const map = {};
           (att || []).forEach((r) => { map[r.event_id] = r; });
           setRecords(map);
-        } else setRecords({});
+
+          const started = await pg('/rpc/events_started_map', session.accessToken, {
+            method: 'POST',
+            body: { event_ids: evs.map((e) => e.id) },
+          });
+          const startedM = {};
+          (started || []).forEach((s) => { startedM[s.event_id] = s.started; });
+          setStartedMap(startedM);
+        } else { setRecords({}); setStartedMap({}); }
       } catch (e) { setError(e.message); } finally { setLoading(false); }
     })();
   }, [session, athlete, month]);
@@ -1526,7 +1535,7 @@ function ParentAttendanceTab({ session, athlete }) {
             const rec = records[ev.id];
             const statusBadge = rec?.present
               ? <Badge tone="green">Presente</Badge>
-              : ev.attendance_started
+              : startedMap[ev.id]
                 ? <Badge tone="grey">Ausente</Badge>
                 : <Badge tone="amber">Por marcar</Badge>;
             return (
