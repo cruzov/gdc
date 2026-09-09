@@ -481,6 +481,7 @@ function AuthedApp({ session, profile, onLogout, onProfileChange }) {
     ],
     parent: [
       { key: 'home', label: 'Assiduidade', icon: ClipboardCheck },
+      { key: 'calendar', label: 'Calendário', icon: Calendar },
       { key: 'behavior', label: 'Comportamento', icon: MessageSquareWarning },
     ],
   }[profile.role] || [];
@@ -511,7 +512,7 @@ function AuthedApp({ session, profile, onLogout, onProfileChange }) {
       {tabs.length > 0 && (
         <div className="fixed bottom-0 left-0 right-0 max-w-[480px] mx-auto flex border-t" style={{ background: '#fff', borderColor: 'rgba(11,11,12,0.08)' }}>
           {tabs.map((t) => {
-            const active = route.screen === t.key || (t.key === 'home' && !['events', 'reports', 'behavior', 'users'].includes(route.screen));
+            const active = route.screen === t.key || (t.key === 'home' && !['events', 'reports', 'behavior', 'users', 'calendar'].includes(route.screen));
             return (
               <button key={t.key} onClick={() => setRoute({ screen: t.key })} className="flex-1 flex flex-col items-center gap-0.5 py-2.5">
                 <div className="relative">
@@ -1171,12 +1172,18 @@ function AttendanceScreen({ session, eventId, teamId, onBack }) {
 
   if (!ev) return <div className="px-4 pt-6"><ErrorBlock message={error} /><LoadingBlock /></div>;
   const presentCount = athletes.filter((a) => records[a.id]?.present).length;
+  const isFuture = ev.date > todayISO();
 
   return (
     <div>
       <TopBar title={ev.label} subtitle={`${fmtDate(ev.date)} · ${presentCount}/${athletes.length} presentes`} onBack={onBack} />
       <div className="px-4 pt-4">
         <ErrorBlock message={error} />
+        {isFuture && (
+          <div className="p-3 rounded-xl mb-3 text-sm" style={{ background: 'rgba(255,199,44,0.15)', color: 'var(--gdc-yellow-deep)' }}>
+            Este treino/jogo ainda não aconteceu. A marcação de presenças e comportamento só fica disponível a partir da data do evento.
+          </div>
+        )}
         {athletes.length === 0 ? <Empty icon={Users} title="Sem atletas na equipa" /> : (
           <div className="flex flex-col gap-2">
             {athletes.map((a) => {
@@ -1185,14 +1192,14 @@ function AttendanceScreen({ session, eventId, teamId, onBack }) {
               return (
                 <Card key={a.id}>
                   <div className="flex items-center justify-between gap-3">
-                    <button onClick={() => togglePresent(a.id)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+                    <button onClick={() => !isFuture && togglePresent(a.id)} disabled={isFuture} className="flex items-center gap-3 flex-1 min-w-0 text-left disabled:opacity-50">
                       <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition" style={{ background: present ? '#22C55E' : 'rgba(11,11,12,0.08)' }}>
                         {present ? <Check size={17} color="#fff" /> : <X size={15} color="var(--gdc-grey)" />}
                       </div>
                       <div className="font-semibold text-sm truncate">{a.name}</div>
                     </button>
                   </div>
-                  {present && <div className="mt-3"><SegBehavior value={rec?.behavior} onChange={(v) => setRecord(a.id, { behavior: v })} /></div>}
+                  {present && !isFuture && <div className="mt-3"><SegBehavior value={rec?.behavior} onChange={(v) => setRecord(a.id, { behavior: v })} /></div>}
                 </Card>
               );
             })}
@@ -1297,7 +1304,8 @@ function AthleteDetail({ session, profile, athleteId, onBack }) {
         pg(`/incidents?athlete_id=eq.${athleteId}&select=*&order=date.desc`, session.accessToken),
       ]);
       setAthlete(athRows[0]);
-      setRecords((attRows || []).filter((r) => r.events).sort((a, b) => (b.events.date || '').localeCompare(a.events.date || '')));
+      const today = todayISO();
+      setRecords((attRows || []).filter((r) => r.events && r.events.date <= today).sort((a, b) => (b.events.date || '').localeCompare(a.events.date || '')));
       setIncidents(incRows);
     } catch (e) { setError(e.message); }
   }, [session, athleteId]);
@@ -1399,7 +1407,7 @@ function ParentArea({ session, profile, route, setRoute }) {
 
   if (myKids === null) return <div className="px-4 pt-6"><ErrorBlock message={error} /><LoadingBlock /></div>;
   const athlete = myKids.find((a) => a.id === athleteId) || myKids[0];
-  if (!athlete) return <div className="px-4 pt-6"><Empty icon={Baby} title="Sem atleta associado" hint="Pede ao treinador para te convidar como encarregado de educação com o teu email." /></div>;
+  if (!athlete) return <div className="px-4 pt-6"><Empty icon={Baby} title="Sem atleta associado" hint="Pede ao administrador do clube para te ligar ao atleta." /></div>;
 
   const KidSwitcher = myKids.length > 1 ? (
     <div className="px-4 pt-3">
@@ -1412,9 +1420,60 @@ function ParentArea({ session, profile, route, setRoute }) {
   return (
     <div>
       {KidSwitcher}
-      {route.screen === 'behavior'
-        ? <ParentBehaviorTab session={session} profile={profile} athlete={athlete} />
-        : <ParentAttendanceTab session={session} athlete={athlete} />}
+      {route.screen === 'behavior' ? (
+        <ParentBehaviorTab session={session} profile={profile} athlete={athlete} />
+      ) : route.screen === 'calendar' ? (
+        <ParentCalendarTab session={session} athlete={athlete} />
+      ) : (
+        <ParentAttendanceTab session={session} athlete={athlete} />
+      )}
+    </div>
+  );
+}
+
+function ParentCalendarTab({ session, athlete }) {
+  const [events, setEvents] = useState(null);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    setError('');
+    try {
+      const rows = await pg(`/events?team_id=eq.${athlete.team_id}&select=*&order=date.asc`, session.accessToken);
+      setEvents(rows);
+    } catch (e) { setError(e.message); }
+  }, [session, athlete]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const today = todayISO();
+
+  return (
+    <div className="px-4 pt-4">
+      <div style={{ fontFamily: 'var(--font-display)' }} className="text-xl font-bold mb-0.5">Calendário</div>
+      <div className="text-xs mb-4" style={{ color: 'var(--gdc-grey)' }}>{athlete.teams?.name} · todos os treinos e jogos</div>
+      <ErrorBlock message={error} />
+      {events === null ? <LoadingBlock /> : events.length === 0 ? (
+        <Empty icon={Calendar} title="Sem treinos ou jogos agendados" />
+      ) : (
+        <div className="flex flex-col gap-2">
+          {events.map((ev) => {
+            const isFuture = ev.date > today;
+            return (
+              <Card key={ev.id}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: ev.type === 'Jogo' ? 'rgba(255,199,44,0.22)' : 'rgba(11,11,12,0.06)' }}>
+                      {ev.type === 'Jogo' ? <Swords size={15} color="var(--gdc-yellow-deep)" /> : <Dumbbell size={15} color="var(--gdc-grey)" />}
+                    </div>
+                    <div><div className="font-semibold text-sm">{ev.label}</div><div className="text-xs" style={{ color: 'var(--gdc-grey)' }}>{fmtDate(ev.date)}</div></div>
+                  </div>
+                  {isFuture ? <Badge tone="yellow">Agendado</Badge> : <Badge tone="grey">Realizado</Badge>}
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -1461,9 +1520,9 @@ function ParentAttendanceTab({ session, athlete }) {
         <div className="text-xs mt-2" style={{ color: 'var(--gdc-grey)' }}>{presentCount} de {pastEvents.length} treinos/jogos já realizados</div>
         <div className="text-[11px] mt-1" style={{ color: 'var(--gdc-grey)' }}>Só conta treinos/jogos até hoje — eventos futuros não entram no cálculo.</div>
       </Card>
-      {loading ? <LoadingBlock /> : events.length === 0 ? <Empty icon={Calendar} title="Sem eventos neste mês" /> : (
+      {loading ? <LoadingBlock /> : pastEvents.length === 0 ? <Empty icon={Calendar} title="Sem treinos/jogos já realizados neste mês" /> : (
         <div className="flex flex-col gap-2">
-          {events.map((ev) => {
+          {pastEvents.map((ev) => {
             const rec = records[ev.id];
             const statusBadge = rec?.present
               ? <Badge tone="green">Presente</Badge>
