@@ -60,6 +60,11 @@ function todayISO() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+function defaultEventLabel(type, dateISO) {
+  if (!dateISO) return type;
+  const d = new Date(dateISO + 'T00:00:00');
+  return `${type} ${d.getDate()} ${MESES_LONGOS[d.getMonth()]} ${d.getFullYear()}`;
+}
 function monthRange(month) {
   const [y, m] = month.split('-').map(Number);
   const start = `${month}-01`;
@@ -289,9 +294,39 @@ export default function App() {
             <Button full variant="outline" icon={RefreshCw} onClick={() => loadProfile(session)}>Tentar novamente</Button>
             <div className="mt-2"><Button full variant="ghost" icon={LogOut} onClick={logout}>Sair</Button></div>
           </div>
+        ) : profile.role === 'pending' ? (
+          <PendingRoleScreen profile={profile} onLogout={logout} onRefresh={() => loadProfile(session)} />
         ) : (
           <AuthedApp session={session} profile={profile} onLogout={logout} onProfileChange={() => loadProfile(session)} />
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------- Pending role screen ---------------------------- */
+
+function PendingRoleScreen({ profile, onLogout, onRefresh }) {
+  useEffect(() => {
+    const id = setInterval(() => onRefresh(), 10000);
+    return () => clearInterval(id);
+  }, [onRefresh]);
+
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center px-6 text-center" style={{ background: 'var(--gdc-black)' }}>
+      <Crest size={64} />
+      <div style={{ fontFamily: 'var(--font-display)' }} className="text-white text-xl font-bold mt-5">Olá, {profile.name}</div>
+      <div className="text-sm mt-2 max-w-[30ch]" style={{ color: 'var(--gdc-yellow)' }}>
+        A tua conta foi criada. Falta o administrador do clube atribuir-te uma função (treinador ou encarregado de educação).
+      </div>
+      <div className="text-xs mt-3 max-w-[32ch]" style={{ color: 'rgba(255,255,255,0.6)' }}>
+        Esta página atualiza-se sozinha. Podes fechar e voltar mais tarde.
+      </div>
+      <div className="flex gap-2 mt-6">
+        <Button variant="primary" icon={RefreshCw} onClick={onRefresh}>Atualizar agora</Button>
+        <button onClick={onLogout} className="inline-flex items-center gap-2 px-4 py-3 rounded-xl text-[15px] font-semibold" style={{ background: 'rgba(255,255,255,0.1)', color: '#fff' }}>
+          <LogOut size={17} />Sair
+        </button>
       </div>
     </div>
   );
@@ -336,7 +371,7 @@ function AuthScreen({ onAuthed }) {
       <div className="flex flex-col items-center pt-14 pb-8 px-6">
         <Crest size={72} />
         <div style={{ fontFamily: 'var(--font-display)' }} className="text-white text-2xl font-extrabold mt-4 text-center leading-tight tracking-wide">Gestão de Atletas da Formação</div>
-        <div className="text-sm font-semibold mt-1" style={{ color: 'var(--gdc-yellow)' }}>GDC</div>
+        <div className="text-sm font-semibold mt-1" style={{ color: 'var(--gdc-yellow)' }}>Grupo Desportivo de Calvão</div>
       </div>
 
       <div className="flex-1 rounded-t-3xl px-5 pt-6 pb-8" style={{ background: 'var(--gdc-bg)' }}>
@@ -372,7 +407,7 @@ function AuthScreen({ onAuthed }) {
 
         <div className="mt-6 text-xs text-center leading-relaxed" style={{ color: 'var(--gdc-grey)' }}>
           {mode === 'signup'
-            ? 'Se foste convidado como treinador ou encarregado de educação, cria a conta com o mesmo email do convite — ficas ligado automaticamente.'
+            ? 'Depois de criares a conta, pede ao administrador do clube para te atribuir a função de treinador ou de encarregado de educação.'
             : 'Esqueceste a palavra-passe? Por agora, pede ao administrador para te ajudar (recuperação por email ainda não está configurada).'}
         </div>
       </div>
@@ -385,7 +420,10 @@ function AuthScreen({ onAuthed }) {
 function AuthedApp({ session, profile, onLogout, onProfileChange }) {
   const [route, setRoute] = useState({ screen: 'home' });
   const tabs = {
-    admin: [{ key: 'home', label: 'Equipas', icon: Trophy }],
+    admin: [
+      { key: 'home', label: 'Equipas', icon: Trophy },
+      { key: 'users', label: 'Utilizadores', icon: Users },
+    ],
     coach: [
       { key: 'home', label: 'Atletas', icon: Users },
       { key: 'events', label: 'Calendário', icon: Calendar },
@@ -423,7 +461,7 @@ function AuthedApp({ session, profile, onLogout, onProfileChange }) {
       {tabs.length > 0 && (
         <div className="fixed bottom-0 left-0 right-0 max-w-[480px] mx-auto flex border-t" style={{ background: '#fff', borderColor: 'rgba(11,11,12,0.08)' }}>
           {tabs.map((t) => {
-            const active = route.screen === t.key || (t.key === 'home' && !['events', 'reports', 'behavior'].includes(route.screen));
+            const active = route.screen === t.key || (t.key === 'home' && !['events', 'reports', 'behavior', 'users'].includes(route.screen));
             return (
               <button key={t.key} onClick={() => setRoute({ screen: t.key })} className="flex-1 flex flex-col items-center gap-0.5 py-2.5">
                 <t.icon size={19} color={active ? 'var(--gdc-yellow-deep)' : 'var(--gdc-grey)'} />
@@ -462,10 +500,12 @@ function AdminArea({ session, route, setRoute }) {
   if (route.screen === 'team' && route.teamId) {
     return <AdminTeamDetail session={session} teamId={route.teamId} onBack={() => { setRoute({ screen: 'home' }); load(); }} />;
   }
+  if (route.screen === 'users') {
+    return <AdminUsersTab session={session} />;
+  }
 
-  const createTeam = async ({ teamName, coachEmail }) => {
-    const [team] = await pg('/teams', session.accessToken, { method: 'POST', body: { name: teamName }, prefer: 'return=representation' });
-    await pg('/invites', session.accessToken, { method: 'POST', body: { email: coachEmail, role: 'coach', team_id: team.id }, prefer: 'return=representation' });
+  const createTeam = async ({ teamName }) => {
+    await pg('/teams', session.accessToken, { method: 'POST', body: { name: teamName }, prefer: 'return=representation' });
     setShowNewTeam(false);
     load();
   };
@@ -478,7 +518,7 @@ function AdminArea({ session, route, setRoute }) {
       </div>
       <ErrorBlock message={error} />
       {teams === null ? <LoadingBlock /> : teams.length === 0 ? (
-        <Empty icon={Trophy} title="Ainda sem equipas" hint="Cria a primeira equipa e convida um treinador por email." action={<Button icon={Plus} onClick={() => setShowNewTeam(true)}>Criar equipa</Button>} />
+        <Empty icon={Trophy} title="Ainda sem equipas" hint="Cria a primeira equipa. Depois atribui um treinador no separador Utilizadores." action={<Button icon={Plus} onClick={() => setShowNewTeam(true)}>Criar equipa</Button>} />
       ) : (
         <div className="flex flex-col gap-2.5">
           {teams.map((t) => {
@@ -506,23 +546,19 @@ function AdminArea({ session, route, setRoute }) {
 
 function NewTeamModal({ onClose, onCreate }) {
   const [teamName, setTeamName] = useState('');
-  const [coachEmail, setCoachEmail] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const submit = async () => {
     setSaving(true); setError('');
-    try { await onCreate({ teamName: teamName.trim(), coachEmail: coachEmail.trim() }); }
+    try { await onCreate({ teamName: teamName.trim() }); }
     catch (e) { setError(e.message); } finally { setSaving(false); }
   };
   return (
     <Modal title="Nova equipa" onClose={onClose}>
       <ErrorBlock message={error} />
       <Field label="Nome da equipa (ex: Sub-11)"><input style={inputStyle} value={teamName} onChange={(e) => setTeamName(e.target.value)} placeholder="Sub-11" /></Field>
-      <Field label="Email do treinador responsável">
-        <input style={inputStyle} type="email" value={coachEmail} onChange={(e) => setCoachEmail(e.target.value)} placeholder="treinador@email.com" />
-      </Field>
-      <div className="text-xs mb-3" style={{ color: 'var(--gdc-grey)' }}>O treinador fica associado automaticamente assim que criar conta com este email.</div>
-      <Button full disabled={!teamName.trim() || !coachEmail.trim() || saving} onClick={submit}>{saving ? 'A criar…' : 'Criar equipa'}</Button>
+      <div className="text-xs mb-3" style={{ color: 'var(--gdc-grey)' }}>Depois de criar, atribui um treinador no separador "Utilizadores".</div>
+      <Button full disabled={!teamName.trim() || saving} onClick={submit}>{saving ? 'A criar…' : 'Criar equipa'}</Button>
     </Modal>
   );
 }
@@ -530,31 +566,32 @@ function NewTeamModal({ onClose, onCreate }) {
 function AdminTeamDetail({ session, teamId, onBack }) {
   const [team, setTeam] = useState(null);
   const [coaches, setCoaches] = useState([]);
-  const [pendingInvites, setPendingInvites] = useState([]);
   const [athletes, setAthletes] = useState([]);
+  const [pendingUsers, setPendingUsers] = useState([]);
   const [showAddCoach, setShowAddCoach] = useState(false);
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
     setError('');
     try {
-      const [teamRows, tc, invites, ath] = await Promise.all([
+      const [teamRows, tc, ath, pending] = await Promise.all([
         pg(`/teams?id=eq.${teamId}&select=*`, session.accessToken),
         pg(`/team_coaches?team_id=eq.${teamId}&select=profiles(id,name)`, session.accessToken),
-        pg(`/invites?team_id=eq.${teamId}&role=eq.coach&used=eq.false&select=*`, session.accessToken),
         pg(`/athletes?team_id=eq.${teamId}&select=*,profiles(name)`, session.accessToken),
+        pg(`/profiles?role=eq.pending&select=id,name&order=name`, session.accessToken),
       ]);
       setTeam(teamRows[0]);
       setCoaches(tc.map((r) => r.profiles).filter(Boolean));
-      setPendingInvites(invites);
       setAthletes(ath);
+      setPendingUsers(pending);
     } catch (e) { setError(e.message); }
   }, [session, teamId]);
 
   useEffect(() => { load(); }, [load]);
 
-  const addCoach = async (email) => {
-    await pg('/invites', session.accessToken, { method: 'POST', body: { email, role: 'coach', team_id: teamId }, prefer: 'return=representation' });
+  const addCoach = async (userId) => {
+    await pg('/team_coaches', session.accessToken, { method: 'POST', body: { team_id: teamId, coach_id: userId }, prefer: 'return=representation' });
+    await pg(`/profiles?id=eq.${userId}`, session.accessToken, { method: 'PATCH', body: { role: 'coach' } });
     setShowAddCoach(false);
     load();
   };
@@ -579,18 +616,7 @@ function AdminTeamDetail({ session, teamId, onBack }) {
               </div>
             </Card>
           ))}
-          {pendingInvites.map((i) => (
-            <Card key={i.id}>
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: 'rgba(11,11,12,0.06)' }}><Mail size={16} color="var(--gdc-grey)" /></div>
-                <div>
-                  <div className="font-semibold text-sm">{i.email}</div>
-                  <div className="text-xs" style={{ color: 'var(--gdc-grey)' }}>Convite enviado, a aguardar conta</div>
-                </div>
-              </div>
-            </Card>
-          ))}
-          {coaches.length === 0 && pendingInvites.length === 0 && <div className="text-sm py-2" style={{ color: 'var(--gdc-grey)' }}>Sem treinadores ainda.</div>}
+          {coaches.length === 0 && <div className="text-sm py-2" style={{ color: 'var(--gdc-grey)' }}>Sem treinadores ainda.</div>}
         </div>
 
         <div className="font-bold text-sm mb-2" style={{ color: 'var(--gdc-black)' }}>Atletas</div>
@@ -601,34 +627,167 @@ function AdminTeamDetail({ session, teamId, onBack }) {
             {athletes.map((a) => (
               <Card key={a.id}>
                 <div className="font-semibold text-sm">{a.name}</div>
-                <div className="text-xs mt-0.5" style={{ color: 'var(--gdc-grey)' }}>Enc. educação: {a.profiles?.name || a.parent_email || '—'}</div>
+                <div className="text-xs mt-0.5" style={{ color: 'var(--gdc-grey)' }}>Enc. educação: {a.profiles?.name || 'Por atribuir'}</div>
               </Card>
             ))}
           </div>
         )}
       </div>
       {showAddCoach && (
-        <Modal title="Adicionar treinador" onClose={() => setShowAddCoach(false)}>
-          <AddCoachForm onSubmit={addCoach} />
+        <Modal title="Atribuir treinador" onClose={() => setShowAddCoach(false)}>
+          <AssignFromPendingForm
+            pendingUsers={pendingUsers}
+            emptyHint="Ninguém à espera de função. A pessoa tem de criar conta primeiro."
+            buttonLabel="Atribuir como treinador"
+            onSubmit={addCoach}
+          />
         </Modal>
       )}
     </div>
   );
 }
 
-function AddCoachForm({ onSubmit }) {
-  const [email, setEmail] = useState('');
+function AssignFromPendingForm({ pendingUsers, emptyHint, buttonLabel, onSubmit }) {
+  const [userId, setUserId] = useState(pendingUsers[0]?.id || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const submit = async () => {
     setSaving(true); setError('');
-    try { await onSubmit(email.trim()); } catch (e) { setError(e.message); } finally { setSaving(false); }
+    try { await onSubmit(userId); } catch (e) { setError(e.message); } finally { setSaving(false); }
+  };
+  if (pendingUsers.length === 0) {
+    return <div className="text-sm py-4 text-center" style={{ color: 'var(--gdc-grey)' }}>{emptyHint}</div>;
+  }
+  return (
+    <div>
+      <ErrorBlock message={error} />
+      <Field label="Utilizador (já criou conta, sem função atribuída)">
+        <select style={inputStyle} value={userId} onChange={(e) => setUserId(e.target.value)}>
+          {pendingUsers.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+        </select>
+      </Field>
+      <Button full disabled={!userId || saving} onClick={submit}>{saving ? 'A atribuir…' : buttonLabel}</Button>
+    </div>
+  );
+}
+
+function AdminUsersTab({ session }) {
+  const [pending, setPending] = useState(null);
+  const [teams, setTeams] = useState([]);
+  const [athletes, setAthletes] = useState([]);
+  const [error, setError] = useState('');
+  const [assignTarget, setAssignTarget] = useState(null); // { user, type: 'coach'|'parent' }
+
+  const load = useCallback(async () => {
+    setError('');
+    try {
+      const [pend, tm, ath] = await Promise.all([
+        pg(`/profiles?role=eq.pending&select=*&order=created_at`, session.accessToken),
+        pg(`/teams?select=id,name&order=name`, session.accessToken),
+        pg(`/athletes?select=id,name,teams(name)&order=name`, session.accessToken),
+      ]);
+      setPending(pend);
+      setTeams(tm);
+      setAthletes(ath);
+    } catch (e) { setError(e.message); }
+  }, [session]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const assignCoach = async (userId, teamId) => {
+    await pg('/team_coaches', session.accessToken, { method: 'POST', body: { team_id: teamId, coach_id: userId }, prefer: 'return=representation' });
+    await pg(`/profiles?id=eq.${userId}`, session.accessToken, { method: 'PATCH', body: { role: 'coach' } });
+    setAssignTarget(null);
+    load();
+  };
+  const assignParent = async (userId, athleteId) => {
+    await pg(`/athletes?id=eq.${athleteId}`, session.accessToken, { method: 'PATCH', body: { parent_id: userId } });
+    await pg(`/profiles?id=eq.${userId}`, session.accessToken, { method: 'PATCH', body: { role: 'parent' } });
+    setAssignTarget(null);
+    load();
+  };
+
+  return (
+    <div className="px-4 pt-4">
+      <div style={{ fontFamily: 'var(--font-display)' }} className="text-xl font-bold mb-1">Utilizadores</div>
+      <div className="text-xs mb-4" style={{ color: 'var(--gdc-grey)' }}>Contas criadas à espera de função.</div>
+      <ErrorBlock message={error} />
+      {pending === null ? <LoadingBlock /> : pending.length === 0 ? (
+        <Empty icon={Users} title="Sem contas por atribuir" hint="Assim que alguém criar conta, aparece aqui para lhe atribuíres uma função." />
+      ) : (
+        <div className="flex flex-col gap-2.5">
+          {pending.map((u) => (
+            <Card key={u.id}>
+              <div className="font-semibold text-sm mb-2">{u.name}</div>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" full icon={Dumbbell} onClick={() => setAssignTarget({ user: u, type: 'coach' })}>Treinador</Button>
+                <Button size="sm" variant="outline" full icon={Baby} onClick={() => setAssignTarget({ user: u, type: 'parent' })}>Enc. educação</Button>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {assignTarget?.type === 'coach' && (
+        <Modal title={`Atribuir equipa a ${assignTarget.user.name}`} onClose={() => setAssignTarget(null)}>
+          {teams.length === 0 ? (
+            <div className="text-sm py-4 text-center" style={{ color: 'var(--gdc-grey)' }}>Cria primeiro uma equipa no separador "Equipas".</div>
+          ) : (
+            <TeamPicker teams={teams} onSubmit={(teamId) => assignCoach(assignTarget.user.id, teamId)} />
+          )}
+        </Modal>
+      )}
+      {assignTarget?.type === 'parent' && (
+        <Modal title={`Ligar ${assignTarget.user.name} a um atleta`} onClose={() => setAssignTarget(null)}>
+          {athletes.length === 0 ? (
+            <div className="text-sm py-4 text-center" style={{ color: 'var(--gdc-grey)' }}>Ainda não há atletas criados. Pede a um treinador para criar o atleta primeiro.</div>
+          ) : (
+            <AthletePicker athletes={athletes} onSubmit={(athleteId) => assignParent(assignTarget.user.id, athleteId)} />
+          )}
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function TeamPicker({ teams, onSubmit }) {
+  const [teamId, setTeamId] = useState(teams[0]?.id || '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const submit = async () => {
+    setSaving(true); setError('');
+    try { await onSubmit(teamId); } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
   return (
     <div>
       <ErrorBlock message={error} />
-      <Field label="Email do treinador"><input style={inputStyle} type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="treinador@email.com" /></Field>
-      <Button full disabled={!email.trim() || saving} onClick={submit}>{saving ? 'A convidar…' : 'Convidar'}</Button>
+      <Field label="Equipa">
+        <select style={inputStyle} value={teamId} onChange={(e) => setTeamId(e.target.value)}>
+          {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+      </Field>
+      <Button full disabled={!teamId || saving} onClick={submit}>{saving ? 'A atribuir…' : 'Atribuir como treinador'}</Button>
+    </div>
+  );
+}
+
+function AthletePicker({ athletes, onSubmit }) {
+  const [athleteId, setAthleteId] = useState(athletes[0]?.id || '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const submit = async () => {
+    setSaving(true); setError('');
+    try { await onSubmit(athleteId); } catch (e) { setError(e.message); } finally { setSaving(false); }
+  };
+  return (
+    <div>
+      <ErrorBlock message={error} />
+      <Field label="Atleta">
+        <select style={inputStyle} value={athleteId} onChange={(e) => setAthleteId(e.target.value)}>
+          {athletes.map((a) => <option key={a.id} value={a.id}>{a.name}{a.teams?.name ? ` · ${a.teams.name}` : ''}</option>)}
+        </select>
+      </Field>
+      <Button full disabled={!athleteId || saving} onClick={submit}>{saving ? 'A atribuir…' : 'Atribuir como encarregado de educação'}</Button>
     </div>
   );
 }
@@ -653,7 +812,7 @@ function CoachArea({ session, profile, route, setRoute }) {
 
   if (myTeams === null) return <div className="px-4 pt-6"><ErrorBlock message={error} /><LoadingBlock /></div>;
   const team = myTeams.find((t) => t.id === teamId) || myTeams[0];
-  if (!team) return <div className="px-4 pt-6"><Empty icon={Trophy} title="Sem equipa associada" hint="Pede ao administrador para te convidar para uma equipa com o teu email." /></div>;
+  if (!team) return <div className="px-4 pt-6"><Empty icon={Trophy} title="Sem equipa associada" hint="Pede ao administrador para te atribuir a uma equipa." /></div>;
 
   const TeamSwitcher = myTeams.length > 1 ? (
     <div className="px-4 pt-3">
@@ -707,13 +866,9 @@ function AthletesTab({ session, team, setRoute }) {
     })();
   }, [athletes, session]);
 
-  const addAthlete = async ({ name, birthYear, mode, parentEmail, existingParentId }) => {
+  const addAthlete = async ({ name, birthYear }) => {
     const body = { team_id: team.id, name, birth_year: birthYear ? Number(birthYear) : null };
-    if (mode === 'existing') body.parent_id = existingParentId; else body.parent_email = parentEmail;
-    const [athlete] = await pg('/athletes', session.accessToken, { method: 'POST', body, prefer: 'return=representation' });
-    if (mode === 'new') {
-      await pg('/invites', session.accessToken, { method: 'POST', body: { email: parentEmail, role: 'parent', athlete_id: athlete.id }, prefer: 'return=representation' });
-    }
+    await pg('/athletes', session.accessToken, { method: 'POST', body, prefer: 'return=representation' });
     setShowAdd(false);
     load();
   };
@@ -734,7 +889,7 @@ function AthletesTab({ session, team, setRoute }) {
               <div className="flex items-center justify-between">
                 <div>
                   <div className="font-semibold text-sm">{a.name}{a.birth_year ? ` · ${a.birth_year}` : ''}</div>
-                  <div className="text-xs mt-0.5" style={{ color: 'var(--gdc-grey)' }}>Enc.: {a.profiles?.name || (a.parent_email ? `${a.parent_email} (convite pendente)` : '—')}</div>
+                  <div className="text-xs mt-0.5" style={{ color: 'var(--gdc-grey)' }}>Enc.: {a.profiles?.name || 'Por atribuir (pede ao admin)'}</div>
                 </div>
                 <div className="flex items-center gap-2">
                   {incidentCounts[a.id] > 0 && <Badge tone="amber">{incidentCounts[a.id]} incid.</Badge>}
@@ -753,29 +908,15 @@ function AthletesTab({ session, team, setRoute }) {
 function AddAthleteModal({ session, onClose, onSubmit }) {
   const [name, setName] = useState('');
   const [birthYear, setBirthYear] = useState('');
-  const [mode, setMode] = useState('new');
-  const [parentEmail, setParentEmail] = useState('');
-  const [existingParents, setExistingParents] = useState([]);
-  const [existingParentId, setExistingParentId] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const rows = await pg(`/profiles?role=eq.parent&select=id,name&order=name`, session.accessToken);
-        setExistingParents(rows);
-        if (rows[0]) setExistingParentId(rows[0].id);
-      } catch (_) {}
-    })();
-  }, [session]);
-
-  const canSubmit = name.trim() && (mode === 'new' ? parentEmail.trim() : existingParentId);
+  const canSubmit = name.trim();
 
   const submit = async () => {
     setSaving(true); setError('');
     try {
-      await onSubmit({ name: name.trim(), birthYear: birthYear.trim(), mode, parentEmail: parentEmail.trim(), existingParentId });
+      await onSubmit({ name: name.trim(), birthYear: birthYear.trim() });
     } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
 
@@ -784,24 +925,7 @@ function AddAthleteModal({ session, onClose, onSubmit }) {
       <ErrorBlock message={error} />
       <Field label="Nome do atleta"><input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome completo" /></Field>
       <Field label="Ano de nascimento (opcional)"><input style={inputStyle} value={birthYear} onChange={(e) => setBirthYear(e.target.value)} placeholder="2015" /></Field>
-      <div className="text-xs font-semibold mb-2" style={{ color: 'var(--gdc-grey)' }}>Encarregado de educação</div>
-      <div className="flex gap-2 mb-3">
-        <button onClick={() => setMode('new')} className="flex-1 py-2 rounded-lg text-sm font-semibold" style={{ background: mode === 'new' ? 'var(--gdc-yellow)' : 'rgba(11,11,12,0.05)' }}>Convidar por email</button>
-        {existingParents.length > 0 && (
-          <button onClick={() => setMode('existing')} className="flex-1 py-2 rounded-lg text-sm font-semibold" style={{ background: mode === 'existing' ? 'var(--gdc-yellow)' : 'rgba(11,11,12,0.05)' }}>Já tem conta (irmão/ã)</button>
-        )}
-      </div>
-      {mode === 'new' ? (
-        <Field label="Email do encarregado de educação">
-          <input style={inputStyle} type="email" value={parentEmail} onChange={(e) => setParentEmail(e.target.value)} placeholder="encarregado@email.com" />
-        </Field>
-      ) : (
-        <Field label="Selecionar encarregado de educação">
-          <select style={inputStyle} value={existingParentId} onChange={(e) => setExistingParentId(e.target.value)}>
-            {existingParents.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </Field>
-      )}
+      <div className="text-xs mb-3" style={{ color: 'var(--gdc-grey)' }}>Depois de criares o atleta, pede ao administrador para lhe atribuir o encarregado de educação (separador "Utilizadores").</div>
       <Button full disabled={!canSubmit || saving} onClick={submit}>{saving ? 'A guardar…' : 'Adicionar atleta'}</Button>
     </Modal>
   );
@@ -873,12 +997,19 @@ function EventsTab({ session, team, setRoute }) {
 function NewEventModal({ onClose, onSubmit }) {
   const [type, setType] = useState('Treino');
   const [date, setDate] = useState(todayISO());
-  const [label, setLabel] = useState('');
+  const [label, setLabel] = useState(() => defaultEventLabel('Treino', todayISO()));
+  const [labelTouched, setLabelTouched] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!labelTouched) setLabel(defaultEventLabel(type, date));
+  }, [type, date, labelTouched]);
+
   const submit = async () => {
     setSaving(true); setError('');
-    try { await onSubmit({ type, date, label: label.trim() }); } catch (e) { setError(e.message); } finally { setSaving(false); }
+    try { await onSubmit({ type, date, label: label.trim() || defaultEventLabel(type, date) }); }
+    catch (e) { setError(e.message); } finally { setSaving(false); }
   };
   return (
     <Modal title="Novo treino/jogo" onClose={onClose}>
@@ -889,7 +1020,9 @@ function NewEventModal({ onClose, onSubmit }) {
         ))}
       </div>
       <Field label="Data"><input type="date" style={inputStyle} value={date} onChange={(e) => setDate(e.target.value)} /></Field>
-      <Field label={`Nome (opcional, ex: "vs Sporting")`}><input style={inputStyle} value={label} onChange={(e) => setLabel(e.target.value)} placeholder={type} /></Field>
+      <Field label="Nome (editável, ex: 'vs Sporting')">
+        <input style={inputStyle} value={label} onChange={(e) => { setLabel(e.target.value); setLabelTouched(true); }} placeholder={defaultEventLabel(type, date)} />
+      </Field>
       <Button full disabled={!date || saving} onClick={submit}>{saving ? 'A criar…' : 'Criar'}</Button>
     </Modal>
   );
@@ -1082,7 +1215,7 @@ function AthleteDetail({ session, profile, athleteId, onBack }) {
 
   return (
     <div>
-      <TopBar title={athlete.name} subtitle={`Enc. educação: ${athlete.profiles?.name || athlete.parent_email || '—'}`} onBack={onBack} />
+      <TopBar title={athlete.name} subtitle={`Enc. educação: ${athlete.profiles?.name || 'Por atribuir'}`} onBack={onBack} />
       <div className="px-4 pt-4">
         <ErrorBlock message={error} />
         <div className="flex items-center justify-between mb-2">
