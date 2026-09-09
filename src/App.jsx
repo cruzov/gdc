@@ -1040,7 +1040,11 @@ function EventsTab({ session, team, setRoute }) {
   const addEvent = async ({ type, date, label }) => {
     const [ev] = await pg('/events', session.accessToken, { method: 'POST', body: { team_id: team.id, type, date, label: label || type }, prefer: 'return=representation' });
     setShowAdd(false);
-    setRoute({ screen: 'event', eventId: ev.id });
+    if (ev.date <= todayISO()) {
+      setRoute({ screen: 'event', eventId: ev.id });
+    } else {
+      load();
+    }
   };
 
   const deleteEvent = async () => {
