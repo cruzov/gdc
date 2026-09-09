@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Users, Calendar, LogOut, Plus, Check, X, ChevronRight, ChevronLeft, Shield,
   Trophy, RefreshCw, ArrowLeft, MessageSquareWarning, CalendarPlus, Swords,
-  Dumbbell, ClipboardCheck, PieChart, Baby, Mail, Lock, UserPlus, LogIn, AlertCircle,
+  Dumbbell, ClipboardCheck, PieChart, Baby, Mail, Lock, UserPlus, LogIn, AlertCircle, Trash2,
 } from 'lucide-react';
 
 /* ---------------------------- Supabase config ---------------------------- */
@@ -184,6 +184,25 @@ function Modal({ title, onClose, children }) {
   );
 }
 
+function ConfirmModal({ title, message, confirmLabel = 'Eliminar', onConfirm, onClose }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const confirm = async () => {
+    setBusy(true); setError('');
+    try { await onConfirm(); } catch (e) { setError(e.message); setBusy(false); }
+  };
+  return (
+    <Modal title={title} onClose={onClose}>
+      <ErrorBlock message={error} />
+      <div className="text-sm mb-5" style={{ color: 'var(--gdc-black)' }}>{message}</div>
+      <div className="flex gap-2">
+        <Button full variant="ghost" onClick={onClose} disabled={busy}>Cancelar</Button>
+        <Button full variant="danger" onClick={confirm} disabled={busy}>{busy ? 'A eliminar…' : confirmLabel}</Button>
+      </div>
+    </Modal>
+  );
+}
+
 function SegBehavior({ value, onChange }) {
   const opts = [{ v: 'Bom', tone: '#22C55E' }, { v: 'Razoável', tone: '#FB923C' }, { v: 'Mau', tone: '#EF4444' }];
   return (
@@ -339,12 +358,18 @@ function AuthScreen({ onAuthed }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [password2, setPassword2] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
 
   const submit = async () => {
-    setError(''); setInfo(''); setLoading(true);
+    setError(''); setInfo('');
+    if (mode === 'signup' && password !== password2) {
+      setError('As palavras-passe não coincidem.');
+      return;
+    }
+    setLoading(true);
     try {
       if (mode === 'signup') {
         const json = await authRequest('/signup', { email: email.trim(), password, data: { name: name.trim() } });
@@ -364,7 +389,7 @@ function AuthScreen({ onAuthed }) {
     }
   };
 
-  const canSubmit = email.trim() && password.length >= 6 && (mode === 'login' || name.trim());
+  const canSubmit = email.trim() && password.length >= 6 && (mode === 'login' || (name.trim() && password2.length >= 6));
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--gdc-black)' }}>
@@ -400,6 +425,14 @@ function AuthScreen({ onAuthed }) {
             <input style={{ ...inputStyle, paddingLeft: 34 }} type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" onKeyDown={(e) => e.key === 'Enter' && canSubmit && submit()} />
           </div>
         </Field>
+        {mode === 'signup' && (
+          <Field label="Confirmar palavra-passe">
+            <div className="relative">
+              <Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2" color="var(--gdc-grey)" />
+              <input style={{ ...inputStyle, paddingLeft: 34 }} type="password" value={password2} onChange={(e) => setPassword2(e.target.value)} placeholder="Repete a palavra-passe" onKeyDown={(e) => e.key === 'Enter' && canSubmit && submit()} />
+            </div>
+          </Field>
+        )}
 
         <Button full disabled={!canSubmit || loading} onClick={submit} icon={mode === 'login' ? LogIn : UserPlus}>
           {loading ? 'Um momento…' : mode === 'login' ? 'Entrar' : 'Criar conta'}
@@ -419,10 +452,27 @@ function AuthScreen({ onAuthed }) {
 
 function AuthedApp({ session, profile, onLogout, onProfileChange }) {
   const [route, setRoute] = useState({ screen: 'home' });
+  const [pendingCount, setPendingCount] = useState(0);
+
+  const refreshPendingCount = useCallback(async () => {
+    if (profile.role !== 'admin') return;
+    try {
+      const rows = await pg(`/profiles?role=eq.pending&select=id`, session.accessToken);
+      setPendingCount(rows.length);
+    } catch (_) {}
+  }, [session, profile.role]);
+
+  useEffect(() => {
+    refreshPendingCount();
+    if (profile.role !== 'admin') return;
+    const id = setInterval(refreshPendingCount, 20000);
+    return () => clearInterval(id);
+  }, [refreshPendingCount, profile.role]);
+
   const tabs = {
     admin: [
       { key: 'home', label: 'Equipas', icon: Trophy },
-      { key: 'users', label: 'Utilizadores', icon: Users },
+      { key: 'users', label: 'Utilizadores', icon: Users, badge: pendingCount },
     ],
     coach: [
       { key: 'home', label: 'Atletas', icon: Users },
@@ -453,7 +503,7 @@ function AuthedApp({ session, profile, onLogout, onProfileChange }) {
       </div>
 
       <div>
-        {profile.role === 'admin' && <AdminArea session={session} route={route} setRoute={setRoute} />}
+        {profile.role === 'admin' && <AdminArea session={session} route={route} setRoute={setRoute} onPendingChange={refreshPendingCount} />}
         {profile.role === 'coach' && <CoachArea session={session} profile={profile} route={route} setRoute={setRoute} />}
         {profile.role === 'parent' && <ParentArea session={session} profile={profile} route={route} setRoute={setRoute} />}
       </div>
@@ -464,7 +514,14 @@ function AuthedApp({ session, profile, onLogout, onProfileChange }) {
             const active = route.screen === t.key || (t.key === 'home' && !['events', 'reports', 'behavior', 'users'].includes(route.screen));
             return (
               <button key={t.key} onClick={() => setRoute({ screen: t.key })} className="flex-1 flex flex-col items-center gap-0.5 py-2.5">
-                <t.icon size={19} color={active ? 'var(--gdc-yellow-deep)' : 'var(--gdc-grey)'} />
+                <div className="relative">
+                  <t.icon size={19} color={active ? 'var(--gdc-yellow-deep)' : 'var(--gdc-grey)'} />
+                  {!!t.badge && (
+                    <span className="absolute -top-1.5 -right-2 min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center text-[9px] font-bold text-white" style={{ background: '#EF4444' }}>
+                      {t.badge > 9 ? '9+' : t.badge}
+                    </span>
+                  )}
+                </div>
                 <span className="text-[10px] font-bold" style={{ color: active ? 'var(--gdc-yellow-deep)' : 'var(--gdc-grey)' }}>{t.label}</span>
               </button>
             );
@@ -477,7 +534,7 @@ function AuthedApp({ session, profile, onLogout, onProfileChange }) {
 
 /* ---------------------------- Admin ---------------------------- */
 
-function AdminArea({ session, route, setRoute }) {
+function AdminArea({ session, route, setRoute, onPendingChange }) {
   const [teams, setTeams] = useState(null);
   const [athleteCounts, setAthleteCounts] = useState({});
   const [error, setError] = useState('');
@@ -501,7 +558,7 @@ function AdminArea({ session, route, setRoute }) {
     return <AdminTeamDetail session={session} teamId={route.teamId} onBack={() => { setRoute({ screen: 'home' }); load(); }} />;
   }
   if (route.screen === 'users') {
-    return <AdminUsersTab session={session} />;
+    return <AdminUsersTab session={session} onPendingChange={onPendingChange} />;
   }
 
   const createTeam = async ({ teamName }) => {
@@ -671,12 +728,13 @@ function AssignFromPendingForm({ pendingUsers, emptyHint, buttonLabel, onSubmit 
   );
 }
 
-function AdminUsersTab({ session }) {
+function AdminUsersTab({ session, onPendingChange }) {
   const [pending, setPending] = useState(null);
   const [teams, setTeams] = useState([]);
   const [athletes, setAthletes] = useState([]);
   const [error, setError] = useState('');
   const [assignTarget, setAssignTarget] = useState(null); // { user, type: 'coach'|'parent' }
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   const load = useCallback(async () => {
     setError('');
@@ -699,12 +757,20 @@ function AdminUsersTab({ session }) {
     await pg(`/profiles?id=eq.${userId}`, session.accessToken, { method: 'PATCH', body: { role: 'coach' } });
     setAssignTarget(null);
     load();
+    onPendingChange?.();
   };
   const assignParent = async (userId, athleteId) => {
     await pg(`/athletes?id=eq.${athleteId}`, session.accessToken, { method: 'PATCH', body: { parent_id: userId } });
     await pg(`/profiles?id=eq.${userId}`, session.accessToken, { method: 'PATCH', body: { role: 'parent' } });
     setAssignTarget(null);
     load();
+    onPendingChange?.();
+  };
+  const deleteAccount = async () => {
+    await pg(`/profiles?id=eq.${deleteTarget.id}`, session.accessToken, { method: 'DELETE' });
+    setDeleteTarget(null);
+    load();
+    onPendingChange?.();
   };
 
   return (
@@ -718,7 +784,12 @@ function AdminUsersTab({ session }) {
         <div className="flex flex-col gap-2.5">
           {pending.map((u) => (
             <Card key={u.id}>
-              <div className="font-semibold text-sm mb-2">{u.name}</div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="font-semibold text-sm">{u.name}</div>
+                <button onClick={() => setDeleteTarget(u)} className="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style={{ background: 'rgba(239,68,68,0.1)' }} title="Eliminar conta">
+                  <Trash2 size={13} color="#B91C1C" />
+                </button>
+              </div>
               <div className="flex gap-2">
                 <Button size="sm" variant="outline" full icon={Dumbbell} onClick={() => setAssignTarget({ user: u, type: 'coach' })}>Treinador</Button>
                 <Button size="sm" variant="outline" full icon={Baby} onClick={() => setAssignTarget({ user: u, type: 'parent' })}>Enc. educação</Button>
@@ -745,6 +816,14 @@ function AdminUsersTab({ session }) {
             <AthletePicker athletes={athletes} onSubmit={(athleteId) => assignParent(assignTarget.user.id, athleteId)} />
           )}
         </Modal>
+      )}
+      {deleteTarget && (
+        <ConfirmModal
+          title="Eliminar conta"
+          message={`Tem a certeza que deseja eliminar a conta de "${deleteTarget.name}"? Esta pessoa deixa de aparecer no clube e, se voltar a entrar, terá de aguardar nova atribuição de função.`}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={deleteAccount}
+        />
       )}
     </div>
   );
@@ -889,7 +968,6 @@ function AthletesTab({ session, team, setRoute }) {
               <div className="flex items-center justify-between">
                 <div>
                   <div className="font-semibold text-sm">{a.name}{a.birth_year ? ` · ${a.birth_year}` : ''}</div>
-                  <div className="text-xs mt-0.5" style={{ color: 'var(--gdc-grey)' }}>Enc.: {a.profiles?.name || 'Por atribuir (pede ao admin)'}</div>
                 </div>
                 <div className="flex items-center gap-2">
                   {incidentCounts[a.id] > 0 && <Badge tone="amber">{incidentCounts[a.id]} incid.</Badge>}
@@ -937,6 +1015,7 @@ function EventsTab({ session, team, setRoute }) {
   const [showAdd, setShowAdd] = useState(false);
   const [athleteTotal, setAthleteTotal] = useState(0);
   const [presentByEvent, setPresentByEvent] = useState({});
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   const load = useCallback(async () => {
     setError('');
@@ -963,6 +1042,12 @@ function EventsTab({ session, team, setRoute }) {
     setRoute({ screen: 'event', eventId: ev.id });
   };
 
+  const deleteEvent = async () => {
+    await pg(`/events?id=eq.${deleteTarget.id}`, session.accessToken, { method: 'DELETE' });
+    setDeleteTarget(null);
+    load();
+  };
+
   return (
     <div className="px-4 pt-4">
       <div className="flex items-center justify-between mb-3">
@@ -975,21 +1060,34 @@ function EventsTab({ session, team, setRoute }) {
       ) : (
         <div className="flex flex-col gap-2">
           {events.map((ev) => (
-            <Card key={ev.id} onClick={() => setRoute({ screen: 'event', eventId: ev.id })}>
+            <Card key={ev.id}>
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: ev.type === 'Jogo' ? 'rgba(255,199,44,0.22)' : 'rgba(11,11,12,0.06)' }}>
+                <div onClick={() => setRoute({ screen: 'event', eventId: ev.id })} className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer">
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: ev.type === 'Jogo' ? 'rgba(255,199,44,0.22)' : 'rgba(11,11,12,0.06)' }}>
                     {ev.type === 'Jogo' ? <Swords size={17} color="var(--gdc-yellow-deep)" /> : <Dumbbell size={17} color="var(--gdc-grey)" />}
                   </div>
-                  <div><div className="font-semibold text-sm">{ev.label}</div><div className="text-xs" style={{ color: 'var(--gdc-grey)' }}>{fmtDate(ev.date)}</div></div>
+                  <div className="min-w-0"><div className="font-semibold text-sm truncate">{ev.label}</div><div className="text-xs" style={{ color: 'var(--gdc-grey)' }}>{fmtDate(ev.date)}</div></div>
                 </div>
-                <Badge tone={ev.type === 'Jogo' ? 'yellow' : 'grey'}>{presentByEvent[ev.id] || 0}/{athleteTotal} presentes</Badge>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Badge tone={ev.type === 'Jogo' ? 'yellow' : 'grey'}>{presentByEvent[ev.id] || 0}/{athleteTotal} presentes</Badge>
+                  <button onClick={() => setDeleteTarget(ev)} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'rgba(239,68,68,0.1)' }} title="Eliminar">
+                    <Trash2 size={14} color="#B91C1C" />
+                  </button>
+                </div>
               </div>
             </Card>
           ))}
         </div>
       )}
       {showAdd && <NewEventModal onClose={() => setShowAdd(false)} onSubmit={addEvent} />}
+      {deleteTarget && (
+        <ConfirmModal
+          title="Eliminar treino/jogo"
+          message="Tem a certeza que deseja apagar este treino?"
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={deleteEvent}
+        />
+      )}
     </div>
   );
 }
@@ -1138,6 +1236,10 @@ function ReportsTab({ session, team }) {
     })();
   }, [session, team, month]);
 
+  const today = todayISO();
+  const pastEvents = events.filter((e) => e.date <= today);
+  const pastEventIds = new Set(pastEvents.map((e) => e.id));
+
   return (
     <div className="px-4 pt-4">
       <div style={{ fontFamily: 'var(--font-display)' }} className="text-xl font-bold mb-3">Relatórios</div>
@@ -1147,10 +1249,11 @@ function ReportsTab({ session, team }) {
         <Empty icon={PieChart} title="Sem eventos neste mês" hint="Escolhe outro mês ou cria treinos/jogos primeiro." />
       ) : (
         <div className="flex flex-col gap-2.5">
+          <div className="text-xs -mt-1 mb-1" style={{ color: 'var(--gdc-grey)' }}>Só conta treinos/jogos até hoje — eventos futuros não entram no cálculo de assiduidade.</div>
           {athletes.map((a) => {
-            const records = attendance.filter((r) => r.athlete_id === a.id);
+            const records = attendance.filter((r) => r.athlete_id === a.id && pastEventIds.has(r.event_id));
             const presentCount = records.filter((r) => r.present).length;
-            const pct = events.length ? Math.round((presentCount / events.length) * 100) : 0;
+            const pct = pastEvents.length ? Math.round((presentCount / pastEvents.length) * 100) : 0;
             const bom = records.filter((r) => r.behavior === 'Bom').length;
             const razo = records.filter((r) => r.behavior === 'Razoável').length;
             const mau = records.filter((r) => r.behavior === 'Mau').length;
@@ -1165,7 +1268,7 @@ function ReportsTab({ session, team }) {
                   <div className="h-full rounded-full" style={{ width: `${pct}%`, background: pct >= 75 ? '#22C55E' : pct >= 50 ? '#FB923C' : '#EF4444' }} />
                 </div>
                 <div className="flex items-center gap-3 text-xs flex-wrap" style={{ color: 'var(--gdc-grey)' }}>
-                  <span>{presentCount}/{events.length} presenças</span><span>·</span>
+                  <span>{presentCount}/{pastEvents.length} presenças</span><span>·</span>
                   <span>{bom} Bom / {razo} Razoável / {mau} Mau</span>
                   {incCount > 0 && <Badge tone="red">{incCount} incid.</Badge>}
                 </div>
@@ -1341,8 +1444,10 @@ function ParentAttendanceTab({ session, athlete }) {
     })();
   }, [session, athlete, month]);
 
-  const presentCount = events.filter((e) => records[e.id]?.present).length;
-  const pct = events.length ? Math.round((presentCount / events.length) * 100) : 0;
+  const today = todayISO();
+  const pastEvents = events.filter((e) => e.date <= today);
+  const presentCount = pastEvents.filter((e) => records[e.id]?.present).length;
+  const pct = pastEvents.length ? Math.round((presentCount / pastEvents.length) * 100) : 0;
 
   return (
     <div className="px-4 pt-4">
@@ -1353,12 +1458,18 @@ function ParentAttendanceTab({ session, athlete }) {
       <Card className="mb-4">
         <div className="flex items-center justify-between mb-2"><div className="text-sm font-semibold">Assiduidade do mês</div><Badge tone={pct >= 75 ? 'green' : pct >= 50 ? 'amber' : 'red'}>{pct}%</Badge></div>
         <div className="h-2 rounded-full overflow-hidden"><div className="h-full rounded-full" style={{ width: `${pct}%`, background: pct >= 75 ? '#22C55E' : pct >= 50 ? '#FB923C' : '#EF4444' }} /></div>
-        <div className="text-xs mt-2" style={{ color: 'var(--gdc-grey)' }}>{presentCount} de {events.length} treinos/jogos</div>
+        <div className="text-xs mt-2" style={{ color: 'var(--gdc-grey)' }}>{presentCount} de {pastEvents.length} treinos/jogos já realizados</div>
+        <div className="text-[11px] mt-1" style={{ color: 'var(--gdc-grey)' }}>Só conta treinos/jogos até hoje — eventos futuros não entram no cálculo.</div>
       </Card>
       {loading ? <LoadingBlock /> : events.length === 0 ? <Empty icon={Calendar} title="Sem eventos neste mês" /> : (
         <div className="flex flex-col gap-2">
           {events.map((ev) => {
             const rec = records[ev.id];
+            const statusBadge = rec?.present
+              ? <Badge tone="green">Presente</Badge>
+              : ev.attendance_started
+                ? <Badge tone="grey">Ausente</Badge>
+                : <Badge tone="amber">Por marcar</Badge>;
             return (
               <Card key={ev.id}>
                 <div className="flex items-center justify-between">
@@ -1368,7 +1479,7 @@ function ParentAttendanceTab({ session, athlete }) {
                     </div>
                     <div><div className="font-semibold text-sm">{ev.label}</div><div className="text-xs" style={{ color: 'var(--gdc-grey)' }}>{fmtDate(ev.date)}</div></div>
                   </div>
-                  {rec?.present ? <Badge tone="green">Presente</Badge> : <Badge tone="grey">{rec ? 'Ausente' : 'Por marcar'}</Badge>}
+                  {statusBadge}
                 </div>
               </Card>
             );
