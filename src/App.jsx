@@ -2000,31 +2000,29 @@ function ParentCallUpsTab({ session, athlete }) {
   const load = useCallback(async () => {
     setError('');
     try {
-      const [ownGames, mine] = await Promise.all([
-        pg(`/events?team_id=eq.${athlete.team_id}&type=eq.Jogo&select=*,call_ups(id,status)&order=date.desc`, session.accessToken),
-        pg(`/call_up_athletes?athlete_id=eq.${athlete.id}&select=call_ups(id,status,event_id,events(id,label,date,team_id,teams(name)))`, session.accessToken),
+      // Tudo o que a regra de segurança já deixa este encarregado de
+      // educação ver: convocatórias enviadas de jogos da equipa do
+      // seu educando (convocado ou não), mais qualquer jogo de outra
+      // equipa onde o seu educando tenha sido especificamente
+      // convocado (atleta emprestado a outro escalão).
+      const [visible, mine] = await Promise.all([
+        pg(`/call_ups?status=eq.sent&select=id,status,event_id,events(id,label,date,team_id,teams(name))`, session.accessToken),
+        pg(`/call_up_athletes?athlete_id=eq.${athlete.id}&select=call_up_id`, session.accessToken),
       ]);
 
-      const convokedCallUpIds = new Set(
-        (mine || []).filter((m) => m.call_ups?.status === 'sent').map((m) => m.call_ups.id)
-      );
+      const convokedIds = new Set((mine || []).map((m) => m.call_up_id));
 
-      const ownRows = (ownGames || [])
-        .map((ev) => {
-          const cu = Array.isArray(ev.call_ups) ? ev.call_ups[0] : ev.call_ups;
-          if (!cu || cu.status !== 'sent') return null;
-          return { event: ev, teamName: null, convoked: convokedCallUpIds.has(cu.id) };
-        })
-        .filter(Boolean);
+      const built = (visible || [])
+        .filter((cu) => cu.events)
+        .map((cu) => ({
+          event: cu.events,
+          teamName: cu.events.team_id !== athlete.team_id ? (cu.events.teams?.name || null) : null,
+          convoked: convokedIds.has(cu.id),
+        }))
+        .filter((r) => r.event.team_id === athlete.team_id || r.convoked)
+        .sort((a, b) => b.event.date.localeCompare(a.event.date));
 
-      const ownEventIds = new Set(ownRows.map((r) => r.event.id));
-      const crossRows = (mine || [])
-        .map((m) => m.call_ups)
-        .filter((cu) => cu && cu.status === 'sent' && cu.events && cu.events.team_id !== athlete.team_id && !ownEventIds.has(cu.events.id))
-        .map((cu) => ({ event: cu.events, teamName: cu.events.teams?.name, convoked: true }));
-
-      const all = [...ownRows, ...crossRows].sort((a, b) => b.event.date.localeCompare(a.event.date));
-      setRows(all);
+      setRows(built);
     } catch (e) { setError(e.message); }
   }, [session, athlete]);
 
