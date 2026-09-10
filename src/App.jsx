@@ -2011,7 +2011,7 @@ function ParentCallUpsTab({ session, athlete }) {
 
       const ownRows = (ownGames || [])
         .map((ev) => {
-          const cu = (ev.call_ups || [])[0];
+          const cu = Array.isArray(ev.call_ups) ? ev.call_ups[0] : ev.call_ups;
           if (!cu || cu.status !== 'sent') return null;
           return { event: ev, teamName: null, convoked: convokedCallUpIds.has(cu.id) };
         })
