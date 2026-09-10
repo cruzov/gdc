@@ -264,6 +264,7 @@ export default function App() {
   const [session, setSession] = useState(null); // {accessToken, refreshToken, userId, email}
   const [profile, setProfile] = useState(null);
   const [profileError, setProfileError] = useState('');
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   const loadProfile = useCallback(async (sess) => {
     try {
@@ -326,14 +327,23 @@ export default function App() {
           <div className="px-5 pt-10">
             <ErrorBlock message={profileError || 'A preparar o teu perfil…'} />
             <Button full variant="outline" icon={RefreshCw} onClick={() => loadProfile(session)}>Tentar novamente</Button>
-            <div className="mt-2"><Button full variant="ghost" icon={LogOut} onClick={logout}>Sair</Button></div>
+            <div className="mt-2"><Button full variant="ghost" icon={LogOut} onClick={() => setShowLogoutConfirm(true)}>Sair</Button></div>
           </div>
         ) : profile.role === 'pending' ? (
-          <PendingRoleScreen profile={profile} onLogout={logout} onRefresh={() => loadProfile(session)} />
+          <PendingRoleScreen profile={profile} onLogout={() => setShowLogoutConfirm(true)} onRefresh={() => loadProfile(session)} />
         ) : (
-          <AuthedApp session={session} profile={profile} onLogout={logout} onProfileChange={() => loadProfile(session)} />
+          <AuthedApp session={session} profile={profile} onLogout={() => setShowLogoutConfirm(true)} onProfileChange={() => loadProfile(session)} />
         )}
       </div>
+      {showLogoutConfirm && (
+        <ConfirmModal
+          title="Terminar sessão"
+          message="Tem a certeza que quer sair da sua conta?"
+          confirmLabel="Sair"
+          onClose={() => setShowLogoutConfirm(false)}
+          onConfirm={async () => { await logout(); setShowLogoutConfirm(false); }}
+        />
+      )}
     </div>
   );
 }
