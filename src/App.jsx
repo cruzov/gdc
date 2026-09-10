@@ -372,11 +372,14 @@ function AuthScreen({ onAuthed }) {
     setLoading(true);
     try {
       if (mode === 'signup') {
-        const json = await authRequest('/signup', { email: email.trim(), password, data: { name: name.trim() } });
+        const submittedEmail = email.trim();
+        const json = await authRequest('/signup', { email: submittedEmail, password, data: { name: name.trim() } });
         if (json.access_token) {
           await onAuthed(json);
         } else {
-          setInfo('Conta criada. Pede a alguém para verificar as definições de confirmação de email do clube, ou tenta entrar diretamente.');
+          setName(''); setEmail(''); setPassword(''); setPassword2('');
+          setMode('login');
+          setInfo(`Falta um passo: enviámos um email de confirmação para ${submittedEmail}. Abre esse email e clica no link para ativar a conta — só depois consegues entrar.`);
         }
       } else {
         const json = await authRequest('/token?grant_type=password', { email: email.trim(), password });
