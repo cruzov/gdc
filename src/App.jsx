@@ -1530,9 +1530,8 @@ function CallUpDetail({ session, eventId, team, onBack }) {
   if (!event) return <div className="px-4 pt-6"><ErrorBlock message={error} /><LoadingBlock /></div>;
 
   const today = todayISO();
-  const isFuture = event.date > today;
   const isSent = callUp?.status === 'sent';
-  const locked = isSent && isFuture;
+  const locked = event.date < today;
 
   const ensureCallUp = async () => {
     if (callUp) return callUp;
@@ -1577,13 +1576,12 @@ function CallUpDetail({ session, eventId, team, onBack }) {
     setSending(true); setError(''); setSendResult('');
     try {
       const cu = await ensureCallUp();
-      await pg(`/call_ups?id=eq.${cu.id}`, session.accessToken, { method: 'PATCH', body: { status: 'sent', sent_at: new Date().toISOString() } });
-      setCallUp({ ...cu, status: 'sent' });
-      try {
-        const result = await callFunction('/send-call-up-emails', session.accessToken, { call_up_id: cu.id });
-        setSendResult(`Convocatória enviada. Emails enviados: ${result.sent ?? 0}.`);
-      } catch (mailErr) {
-        setSendResult(`Convocatória marcada como enviada, mas houve um problema a enviar os emails: ${mailErr.message}`);
+      const result = await callFunction('/send-call-up-emails', session.accessToken, { call_up_id: cu.id });
+      setCallUp((prev) => ({ ...prev, status: 'sent' }));
+      if (result.note) {
+        setSendResult(result.resend ? 'Convocatória atualizada. Sem alterações desde o último envio, por isso não foi enviado nenhum email.' : 'Convocatória enviada.');
+      } else {
+        setSendResult(`${result.resend ? 'Convocatória atualizada e emails enviados' : 'Convocatória enviada'}: ${result.sent ?? 0}.`);
       }
     } catch (e) { setError(e.message); } finally { setSending(false); }
   };
@@ -1604,7 +1602,7 @@ function CallUpDetail({ session, eventId, team, onBack }) {
 
         {locked && (
           <div className="p-3 rounded-xl mb-3 text-sm" style={{ background: 'rgba(255,199,44,0.15)', color: 'var(--gdc-yellow-deep)' }}>
-            Esta convocatória já foi enviada. Só pode voltar a ser editada a partir da data do jogo.
+            Este jogo já aconteceu. A convocatória já não pode ser editada.
           </div>
         )}
 
