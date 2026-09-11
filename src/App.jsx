@@ -7,8 +7,13 @@ import {
 
 /* ---------------------------- Supabase config ---------------------------- */
 
-const SUPABASE_URL = 'https://ugkytywplgaavzkhwtqy.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVna3l0eXdwbGdhYXZ6a2h3dHF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg4NTQ4NjksImV4cCI6MjEwNDQzMDg2OX0.3_aVensIyMYhbnOaZF2CIL1SicuVf0OpMHj2H5mOAy4';
+// Por defeito liga-se à produção. Para apontar a outro projeto
+// (ex: staging), define VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY
+// nas variáveis de ambiente do Vercel (ou num ficheiro .env.local) —
+// sem isso, nada muda e a app continua a ligar-se à produção.
+const SUPABASE_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SUPABASE_URL) || 'https://ugkytywplgaavzkhwtqy.supabase.co';
+const SUPABASE_ANON_KEY = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SUPABASE_ANON_KEY) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVna3l0eXdwbGdhYXZ6a2h3dHF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg4NTQ4NjksImV4cCI6MjEwNDQzMDg2OX0.3_aVensIyMYhbnOaZF2CIL1SicuVf0OpMHj2H5mOAy4';
+const IS_STAGING = SUPABASE_URL !== 'https://ugkytywplgaavzkhwtqy.supabase.co';
 const REFRESH_KEY = 'gdc:refresh_token';
 
 async function authRequest(path, body) {
@@ -358,6 +363,11 @@ export default function App() {
   return (
     <div className="min-h-screen" style={{ background: 'var(--gdc-bg)', fontFamily: 'var(--font-body)' }}>
       <GlobalStyle />
+      {IS_STAGING && (
+        <div className="text-center text-[11px] font-bold py-1" style={{ background: '#EF4444', color: '#fff' }}>
+          AMBIENTE DE TESTE (STAGING) — não são dados reais
+        </div>
+      )}
       <div className="max-w-[480px] mx-auto min-h-screen relative pb-20" style={{ background: 'var(--gdc-bg)' }}>
         {recoverySession ? (
           <SetNewPasswordScreen recoverySession={recoverySession} onDone={finishRecovery} onCancel={() => setRecoverySession(null)} />
