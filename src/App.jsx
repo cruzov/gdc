@@ -7,8 +7,13 @@ import {
 
 /* ---------------------------- Supabase config ---------------------------- */
 
-const SUPABASE_URL = 'https://ugkytywplgaavzkhwtqy.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVna3l0eXdwbGdhYXZ6a2h3dHF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg4NTQ4NjksImV4cCI6MjEwNDQzMDg2OX0.3_aVensIyMYhbnOaZF2CIL1SicuVf0OpMHj2H5mOAy4';
+// Por defeito liga-se à produção. Para apontar a outro projeto
+// (ex: staging), define VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY
+// nas variáveis de ambiente do Vercel (ou num ficheiro .env.local) —
+// sem isso, nada muda e a app continua a ligar-se à produção.
+const SUPABASE_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SUPABASE_URL) || 'https://ugkytywplgaavzkhwtqy.supabase.co';
+const SUPABASE_ANON_KEY = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SUPABASE_ANON_KEY) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVna3l0eXdwbGdhYXZ6a2h3dHF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg4NTQ4NjksImV4cCI6MjEwNDQzMDg2OX0.3_aVensIyMYhbnOaZF2CIL1SicuVf0OpMHj2H5mOAy4';
+const IS_STAGING = SUPABASE_URL !== 'https://ugkytywplgaavzkhwtqy.supabase.co';
 const REFRESH_KEY = 'gdc:refresh_token';
 
 async function authRequest(path, body) {
@@ -358,6 +363,11 @@ export default function App() {
   return (
     <div className="min-h-screen" style={{ background: 'var(--gdc-bg)', fontFamily: 'var(--font-body)' }}>
       <GlobalStyle />
+      {IS_STAGING && (
+        <div className="text-center text-[11px] font-bold py-1" style={{ background: '#EF4444', color: '#fff' }}>
+          AMBIENTE DE TESTE (STAGING) — não são dados reais
+        </div>
+      )}
       <div className="max-w-[480px] mx-auto min-h-screen relative pb-20" style={{ background: 'var(--gdc-bg)' }}>
         {recoverySession ? (
           <SetNewPasswordScreen recoverySession={recoverySession} onDone={finishRecovery} onCancel={() => setRecoverySession(null)} />
@@ -807,6 +817,7 @@ function AdminTeamDetail({ session, teamId, onBack }) {
   const [existingParents, setExistingParents] = useState([]);
   const [showAddCoach, setShowAddCoach] = useState(false);
   const [assignAthlete, setAssignAthlete] = useState(null);
+  const [showAddAthlete, setShowAddAthlete] = useState(false);
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
@@ -834,6 +845,21 @@ function AdminTeamDetail({ session, teamId, onBack }) {
     await pg(`/profiles?id=eq.${userId}`, session.accessToken, { method: 'PATCH', body: { role: 'coach' } });
     setShowAddCoach(false);
     load();
+  };
+
+  const addAthlete = async ({ name, birthYear, parentEmail }) => {
+    const body = { team_id: teamId, name, birth_year: birthYear ? Number(birthYear) : null };
+    const [athlete] = await pg('/athletes', session.accessToken, { method: 'POST', body, prefer: 'return=representation' });
+    let linkResult = null;
+    if (parentEmail) {
+      const rows = await pg('/rpc/set_athlete_parent_email', session.accessToken, {
+        method: 'POST',
+        body: { p_athlete_id: athlete.id, p_email: parentEmail },
+      });
+      linkResult = rows?.[0] || null;
+    }
+    load();
+    return linkResult;
   };
 
   const assignParentToAthlete = async (userId, alreadyParent) => {
@@ -868,9 +894,12 @@ function AdminTeamDetail({ session, teamId, onBack }) {
           {coaches.length === 0 && <div className="text-sm py-2" style={{ color: 'var(--gdc-grey)' }}>Sem treinadores ainda.</div>}
         </div>
 
-        <div className="font-bold text-sm mb-2" style={{ color: 'var(--gdc-black)' }}>Atletas</div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="font-bold text-sm" style={{ color: 'var(--gdc-black)' }}>Atletas</div>
+          <Button size="sm" variant="ghost" icon={Plus} onClick={() => setShowAddAthlete(true)}>Adicionar</Button>
+        </div>
         {athletes.length === 0 ? (
-          <div className="text-sm py-6 text-center" style={{ color: 'var(--gdc-grey)' }}>Sem atletas ainda. Os treinadores podem adicioná-los.</div>
+          <div className="text-sm py-6 text-center" style={{ color: 'var(--gdc-grey)' }}>Sem atletas ainda. Podes adicioná-los aqui ou os treinadores podem fazê-lo.</div>
         ) : (
           <div className="flex flex-col gap-2">
             {athletes.map((a) => (
@@ -896,6 +925,9 @@ function AdminTeamDetail({ session, teamId, onBack }) {
             onSubmit={addCoach}
           />
         </Modal>
+      )}
+      {showAddAthlete && (
+        <AddAthleteModal session={session} onClose={() => setShowAddAthlete(false)} onSubmit={addAthlete} />
       )}
       {assignAthlete && (
         <Modal title={`Encarregado de educação de ${assignAthlete.name}`} onClose={() => setAssignAthlete(null)}>
@@ -1215,7 +1247,6 @@ function AthletesTab({ session, team, setRoute }) {
       });
       linkResult = rows?.[0] || null;
     }
-    setShowAdd(false);
     load();
     return linkResult;
   };
@@ -1267,6 +1298,8 @@ function AddAthleteModal({ session, onClose, onSubmit }) {
       const result = await onSubmit({ name: name.trim(), birthYear: birthYear.trim(), parentEmail: parentEmail.trim() });
       if (result?.linked) {
         setLinkedInfo(`Encontrámos uma conta com este email — ${result.linked_name} ficou já associado(a) como encarregado de educação.`);
+      } else {
+        onClose();
       }
     } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
