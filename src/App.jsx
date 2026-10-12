@@ -670,7 +670,7 @@ function AuthedApp({ session, profile, onLogout, onProfileChange }) {
       { key: 'home', label: 'Assiduidade', icon: ClipboardCheck },
       { key: 'calendar', label: 'Calendário', icon: Calendar },
       { key: 'callups', label: 'Convocatórias', icon: ClipboardList },
-      { key: 'behavior', label: 'Comportamento', icon: MessageSquareWarning },
+      { key: 'behavior', label: 'Observações', icon: MessageSquareWarning },
     ],
   }[profile.role] || [];
 
@@ -1994,10 +1994,10 @@ function AthleteDetail({ session, profile, athleteId, onBack }) {
           </Card>
         )}
         <div className="flex items-center justify-between mb-2">
-          <div className="font-bold text-sm">Incidências de comportamento</div>
+          <div className="font-bold text-sm">Observações</div>
           <Button size="sm" variant="ghost" icon={Plus} onClick={() => setShowIncident(true)}>Registar</Button>
         </div>
-        {incidents.length === 0 ? <div className="text-sm py-4 text-center mb-4" style={{ color: 'var(--gdc-grey)' }}>Sem incidências registadas.</div> : (
+        {incidents.length === 0 ? <div className="text-sm py-4 text-center mb-4" style={{ color: 'var(--gdc-grey)' }}>Sem observações registadas.</div> : (
           <div className="flex flex-col gap-2 mb-6">
             {incidents.map((i) => (
               <Card key={i.id}>
@@ -2028,7 +2028,7 @@ function AthleteDetail({ session, profile, athleteId, onBack }) {
           </div>
         )}
       </div>
-      {showIncident && <IncidentModal onClose={() => setShowIncident(false)} onSubmit={addIncident} />}
+      {showIncident && <IncidentModal onClose={() => setShowIncident(false)} onSubmit={addIncident} title="Registar observação" />}
       {showParentEmail && <ParentEmailModal initialValue={athlete.parent_email || ''} onClose={() => setShowParentEmail(false)} onSubmit={setParentEmail} />}
     </div>
   );
@@ -2071,7 +2071,7 @@ function ParentEmailModal({ initialValue, onClose, onSubmit }) {
   );
 }
 
-function IncidentModal({ onClose, onSubmit }) {
+function IncidentModal({ onClose, onSubmit, title = 'Registar incidência' }) {
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -2080,7 +2080,7 @@ function IncidentModal({ onClose, onSubmit }) {
     try { await onSubmit(text.trim()); } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
   return (
-    <Modal title="Registar incidência" onClose={onClose}>
+    <Modal title={title} onClose={onClose}>
       <ErrorBlock message={error} />
       <Field label="Descrição">
         <textarea style={{ ...inputStyle, minHeight: 100, resize: 'vertical' }} value={text} onChange={(e) => setText(e.target.value)} placeholder="Ex: comportamento na escola, notas, atitude no treino…" />
@@ -2361,12 +2361,12 @@ function ParentBehaviorTab({ session, profile, athlete }) {
   return (
     <div className="px-4 pt-4">
       <div className="flex items-center justify-between mb-4">
-        <div style={{ fontFamily: 'var(--font-display)' }} className="text-xl font-bold">Comportamento</div>
-        <Button size="sm" icon={Plus} onClick={() => setShowIncident(true)}>Comunicar</Button>
+        <div style={{ fontFamily: 'var(--font-display)' }} className="text-xl font-bold">Observações</div>
+        <Button size="sm" icon={Plus} onClick={() => setShowIncident(true)}>Registar</Button>
       </div>
       <ErrorBlock message={error} />
-      <div className="font-bold text-sm mb-2">Comunicadas por ti / pelo treinador</div>
-      {incidents.length === 0 ? <div className="text-sm py-4 text-center mb-6" style={{ color: 'var(--gdc-grey)' }}>Sem incidências registadas.</div> : (
+      <div className="font-bold text-sm mb-2">Registadas por ti / pelo treinador</div>
+      {incidents.length === 0 ? <div className="text-sm py-4 text-center mb-6" style={{ color: 'var(--gdc-grey)' }}>Sem observações registadas.</div> : (
         <div className="flex flex-col gap-2 mb-6">
           {incidents.map((i) => (
             <Card key={i.id}>
@@ -2392,7 +2392,7 @@ function ParentBehaviorTab({ session, profile, athlete }) {
           ))}
         </div>
       )}
-      {showIncident && <IncidentModal onClose={() => setShowIncident(false)} onSubmit={addIncident} />}
+      {showIncident && <IncidentModal onClose={() => setShowIncident(false)} onSubmit={addIncident} title="Registar observação" />}
     </div>
   );
 }
