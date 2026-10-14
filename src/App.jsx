@@ -1946,7 +1946,28 @@ function AthleteDetail({ session, profile, athleteId, onBack }) {
       ]);
       setAthlete(athRows[0]);
       const today = todayISO();
-      setRecords((attRows || []).filter((r) => r.events && r.events.date <= today).sort((a, b) => (b.events.date || '').localeCompare(a.events.date || '')));
+      // Histórico = todos os eventos já realizados da equipa (treinos E jogos),
+      // juntando os registos de presença deste atleta. Assim os jogos aparecem
+      // mesmo quando ainda não há registo de presença para o atleta.
+      const attPast = (attRows || []).filter((r) => r.events && r.events.date <= today);
+      const teamId = athRows[0]?.team_id;
+      const teamEvents = teamId ? await pg(`/events?team_id=eq.${teamId}&date=lte.${today}&select=*&order=date.desc`, session.accessToken) : [];
+      const eventsById = {};
+      (teamEvents || []).forEach((e) => { eventsById[e.id] = e; });
+      attPast.forEach((r) => { eventsById[r.event_id] = r.events; });
+      const recByEvent = {};
+      attPast.forEach((r) => { recByEvent[r.event_id] = r; });
+      // Um evento "já foi marcado" se existir presença registada para alguém da equipa
+      const startedIds = new Set(Object.keys(recByEvent));
+      const ids = Object.keys(eventsById).filter((id) => !startedIds.has(id));
+      for (let i = 0; i < ids.length; i += 50) {
+        const chunk = ids.slice(i, i + 50).join(',');
+        const rows = await pg(`/attendance?event_id=in.(${chunk})&select=event_id`, session.accessToken);
+        (rows || []).forEach((r) => startedIds.add(r.event_id));
+      }
+      setRecords(Object.values(eventsById)
+        .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+        .map((ev) => ({ id: ev.id, events: ev, present: !!recByEvent[ev.id]?.present, behavior: recByEvent[ev.id]?.behavior, started: startedIds.has(ev.id) })));
       setIncidents(incRows);
     } catch (e) { setError(e.message); }
   }, [session, athleteId]);
@@ -2017,9 +2038,9 @@ function AthleteDetail({ session, profile, athleteId, onBack }) {
             {records.map((r) => (
               <Card key={r.id}>
                 <div className="flex items-center justify-between">
-                  <div><div className="font-semibold text-sm">{r.events.label}</div><div className="text-xs" style={{ color: 'var(--gdc-grey)' }}>{fmtDate(r.events.date)}</div></div>
+                  <div><div className="font-semibold text-sm">{r.events.label}</div><div className="text-xs" style={{ color: 'var(--gdc-grey)' }}>{fmtDate(r.events.date)} · {r.events.type || 'Treino'}</div></div>
                   <div className="flex items-center gap-1.5">
-                    {r.present ? <Badge tone="green">Presente</Badge> : <Badge tone="grey">Ausente</Badge>}
+                    {r.present ? <Badge tone="green">Presente</Badge> : r.started ? <Badge tone="grey">Ausente</Badge> : <Badge tone="amber">Por marcar</Badge>}
                     {r.present && r.behavior && <Badge tone={r.behavior === 'Bom' ? 'green' : r.behavior === 'Razoável' ? 'amber' : 'red'}>{r.behavior}</Badge>}
                   </div>
                 </div>
