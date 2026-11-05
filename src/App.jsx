@@ -1670,6 +1670,45 @@ function CallUpsTab({ session, team, setRoute }) {
   );
 }
 
+const DEFAULT_CALLUP_DETAIL = { is_starter: false, is_goalkeeper: false, role: null };
+
+function CallUpPlayerControls({ detail, disabled, onChange }) {
+  const seg = (active) => ({
+    background: active ? 'var(--gdc-black)' : 'transparent',
+    color: active ? 'var(--gdc-yellow)' : 'var(--gdc-black)',
+  });
+  return (
+    <div className="flex flex-wrap items-center gap-2 mt-3 pt-3" style={{ borderTop: '1px solid rgba(11,11,12,0.07)' }}>
+      <div className="inline-flex rounded-lg overflow-hidden" style={{ border: '1.5px solid rgba(11,11,12,0.18)' }} role="group" aria-label="Titular ou suplente">
+        <button type="button" disabled={disabled} onClick={() => onChange({ is_starter: true })} className="px-3 py-1.5 text-xs font-semibold disabled:opacity-50" style={seg(detail.is_starter)}>Titular</button>
+        <button type="button" disabled={disabled} onClick={() => onChange({ is_starter: false })} className="px-3 py-1.5 text-xs font-semibold disabled:opacity-50" style={seg(!detail.is_starter)}>Suplente</button>
+      </div>
+      <button
+        type="button"
+        disabled={disabled}
+        aria-pressed={detail.is_goalkeeper}
+        onClick={() => onChange({ is_goalkeeper: !detail.is_goalkeeper })}
+        className="px-3 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-50"
+        style={detail.is_goalkeeper
+          ? { background: 'var(--gdc-yellow)', color: 'var(--gdc-black)', border: '1.5px solid var(--gdc-yellow)' }
+          : { background: 'transparent', color: 'var(--gdc-black)', border: '1.5px solid rgba(11,11,12,0.18)' }}
+      >GR</button>
+      <select
+        aria-label="Capitão ou sub-capitão"
+        disabled={disabled}
+        value={detail.role || ''}
+        onChange={(e) => onChange({ role: e.target.value || null })}
+        className="px-2 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-50"
+        style={{ border: '1.5px solid rgba(11,11,12,0.18)', background: '#fff' }}
+      >
+        <option value="">Sem cargo</option>
+        <option value="captain">Capitão</option>
+        <option value="vice_captain">Sub-capitão</option>
+      </select>
+    </div>
+  );
+}
+
 function CallUpDetail({ session, eventId, team, onBack }) {
   const [event, setEvent] = useState(null);
   const [callUp, setCallUp] = useState(null);
@@ -1708,15 +1747,22 @@ function CallUpDetail({ session, eventId, team, onBack }) {
   useEffect(() => { load(); }, [load]);
 
   const [selectedSet, setSelectedSet] = useState(new Set());
+  // Detalhes por atleta convocado: { [athleteId]: { is_starter, is_goalkeeper, role } }
+  // role: null | 'captain' | 'vice_captain'
+  const [details, setDetails] = useState({});
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     (async () => {
-      if (!callUp) { setSelectedSet(new Set()); return; }
+      if (!callUp) { setSelectedSet(new Set()); setDetails({}); return; }
       try {
-        const sel = await pg(`/call_up_athletes?call_up_id=eq.${callUp.id}&select=athlete_id`, session.accessToken);
+        const sel = await pg(`/call_up_athletes?call_up_id=eq.${callUp.id}&select=athlete_id,is_starter,is_goalkeeper,role`, session.accessToken);
         setSelectedSet(new Set((sel || []).map((s) => s.athlete_id)));
+        const d = {};
+        (sel || []).forEach((s) => { d[s.athlete_id] = { is_starter: s.is_starter, is_goalkeeper: s.is_goalkeeper, role: s.role }; });
+        setDetails(d);
       } catch (e) { setError(e.message); }
     })();
-  }, [callUp, session]);
+  }, [callUp, session, reloadKey]);
 
   if (!event) return <div className="px-4 pt-6"><ErrorBlock message={error} /><LoadingBlock /></div>;
 
@@ -1740,10 +1786,12 @@ function CallUpDetail({ session, eventId, team, onBack }) {
       if (isSelected) {
         await pg(`/call_up_athletes?call_up_id=eq.${callUp.id}&athlete_id=eq.${athleteId}`, session.accessToken, { method: 'DELETE' });
         setSelectedSet((prev) => { const n = new Set(prev); n.delete(athleteId); return n; });
+        setDetails((prev) => { const n = { ...prev }; delete n[athleteId]; return n; });
       } else {
         const cu = await ensureCallUp();
         await pg('/call_up_athletes', session.accessToken, { method: 'POST', body: { call_up_id: cu.id, athlete_id: athleteId }, prefer: 'return=representation' });
         setSelectedSet((prev) => new Set(prev).add(athleteId));
+        setDetails((prev) => ({ ...prev, [athleteId]: { ...DEFAULT_CALLUP_DETAIL } }));
       }
     } catch (e) { setError(e.message); } finally { setBusyId(null); }
   };
@@ -1752,6 +1800,7 @@ function CallUpDetail({ session, eventId, team, onBack }) {
     const cu = await ensureCallUp();
     await pg('/call_up_athletes', session.accessToken, { method: 'POST', body: { call_up_id: cu.id, athlete_id: athlete.id }, prefer: 'return=representation' });
     setSelectedSet((prev) => new Set(prev).add(athlete.id));
+    setDetails((prev) => ({ ...prev, [athlete.id]: { ...DEFAULT_CALLUP_DETAIL } }));
     setCrossAthletes((prev) => [...prev, athlete]);
     setShowAddCross(false);
   };
@@ -1760,7 +1809,34 @@ function CallUpDetail({ session, eventId, team, onBack }) {
     if (locked) return;
     await pg(`/call_up_athletes?call_up_id=eq.${callUp.id}&athlete_id=eq.${athleteId}`, session.accessToken, { method: 'DELETE' });
     setSelectedSet((prev) => { const n = new Set(prev); n.delete(athleteId); return n; });
+    setDetails((prev) => { const n = { ...prev }; delete n[athleteId]; return n; });
     setCrossAthletes((prev) => prev.filter((a) => a.id !== athleteId));
+  };
+
+  // Atualiza titular/suplente, GR ou capitão/sub-capitão de um atleta convocado.
+  // Só pode haver 1 capitão e 1 sub-capitão: ao atribuir o cargo a alguém,
+  // retira-se primeiro ao atual detentor (a BD também garante isto com índices únicos).
+  const updateDetail = async (athleteId, patch) => {
+    if (locked || !callUp) return;
+    setBusyId(athleteId);
+    setError('');
+    try {
+      if (patch.role) {
+        const holderId = Object.keys(details).find((id) => id !== athleteId && details[id]?.role === patch.role);
+        if (holderId) {
+          await pg(`/call_up_athletes?call_up_id=eq.${callUp.id}&athlete_id=eq.${holderId}`, session.accessToken, { method: 'PATCH', body: { role: null } });
+        }
+      }
+      await pg(`/call_up_athletes?call_up_id=eq.${callUp.id}&athlete_id=eq.${athleteId}`, session.accessToken, { method: 'PATCH', body: patch });
+      setDetails((prev) => {
+        const n = { ...prev };
+        if (patch.role) {
+          Object.keys(n).forEach((id) => { if (id !== athleteId && n[id]?.role === patch.role) n[id] = { ...n[id], role: null }; });
+        }
+        n[athleteId] = { ...(n[athleteId] || DEFAULT_CALLUP_DETAIL), ...patch };
+        return n;
+      });
+    } catch (e) { setError(e.message); setReloadKey((k) => k + 1); } finally { setBusyId(null); }
   };
 
   const sendCallUp = async () => {
@@ -1778,6 +1854,10 @@ function CallUpDetail({ session, eventId, team, onBack }) {
   };
 
   const convokedCount = selectedSet.size;
+  const starterCount = Object.values(details).filter((d) => d.is_starter).length;
+  const captainId = Object.keys(details).find((id) => details[id]?.role === 'captain');
+  const viceId = Object.keys(details).find((id) => details[id]?.role === 'vice_captain');
+  const nameOf = (id) => [...ownAthletes, ...crossAthletes].find((a) => a.id === id)?.name;
 
   return (
     <div>
@@ -1788,8 +1868,13 @@ function CallUpDetail({ session, eventId, team, onBack }) {
 
         <div className="flex items-center justify-between mb-3">
           <Badge tone={isSent ? 'green' : callUp ? 'amber' : 'red'}>{isSent ? 'Convocatória enviada' : callUp ? 'Convocatória iniciada' : 'Sem convocatória'}</Badge>
-          <span className="text-xs" style={{ color: 'var(--gdc-grey)' }}>{convokedCount} convocado{convokedCount === 1 ? '' : 's'}</span>
+          <span className="text-xs" style={{ color: 'var(--gdc-grey)' }}>{convokedCount} convocado{convokedCount === 1 ? '' : 's'} · {starterCount} titular{starterCount === 1 ? '' : 'es'}</span>
         </div>
+        {convokedCount > 0 && (
+          <div className="text-xs mb-3" style={{ color: 'var(--gdc-grey)' }}>
+            Capitão: <b style={{ color: 'var(--gdc-black)' }}>{nameOf(captainId) || '—'}</b> · Sub-capitão: <b style={{ color: 'var(--gdc-black)' }}>{nameOf(viceId) || '—'}</b>
+          </div>
+        )}
 
         {locked && (
           <div className="p-3 rounded-xl mb-3 text-sm" style={{ background: 'rgba(255,199,44,0.15)', color: 'var(--gdc-yellow-deep)' }}>
@@ -1809,6 +1894,9 @@ function CallUpDetail({ session, eventId, team, onBack }) {
                   </div>
                   <div className="font-semibold text-sm truncate">{a.name}</div>
                 </button>
+                {selected && (
+                  <CallUpPlayerControls detail={details[a.id] || DEFAULT_CALLUP_DETAIL} disabled={locked || busyId === a.id} onChange={(patch) => updateDetail(a.id, patch)} />
+                )}
               </Card>
             );
           })}
@@ -1835,6 +1923,7 @@ function CallUpDetail({ session, eventId, team, onBack }) {
                     </button>
                   )}
                 </div>
+                <CallUpPlayerControls detail={details[a.id] || DEFAULT_CALLUP_DETAIL} disabled={locked || busyId === a.id} onChange={(patch) => updateDetail(a.id, patch)} />
               </Card>
             ))}
           </div>
